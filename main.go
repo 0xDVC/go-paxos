@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"time"
 )
 
-// TODO: figure out what message types Paxos actually needs
+// so much to learn, so much to do.
+// TODO: write a blog about this whole shit
 type msgType int
 
 const (
@@ -228,45 +230,127 @@ func (p *proposer) getProposeNum() int {
 	return p.seq<<4 | p.id
 }
 
+// NEW: Acceptor implementation
+// This is my attempt at implementing the acceptor logic
+// TODO: Still figuring out exactly how the promise/accept logic should work
+type acceptor struct {
+	id          int
+	promisedSeq int    // highest sequence number I've promised
+	acceptedSeq int    // sequence number of value I've accepted
+	acceptedVal string // the actual value I've accepted
+	nt          nodeNetwork
+}
+
+func NewAcceptor(id int, nt nodeNetwork) *acceptor {
+	return &acceptor{
+		id:          id,
+		nt:          nt,
+		promisedSeq: 0, // start with no promises
+		acceptedSeq: 0, // start with no accepted values
+	}
+}
+
+// Main acceptor loop - handle incoming messages
+// TODO: Need to handle both Prepare and Propose messages
+func (a *acceptor) run() {
+	log.Printf("Acceptor %d starting...", a.id)
+
+	for {
+		msg := a.nt.recv()
+		if msg == nil {
+			continue // timeout, keep waiting
+		}
+
+		log.Printf("Acceptor %d received message type %d", a.id, msg.typ)
+
+		switch msg.typ {
+		case Prepare:
+			response := a.handlePrepare(*msg)
+			if response != nil {
+				a.nt.send(*response)
+			}
+		case Propose:
+			accepted := a.handlePropose(*msg)
+			log.Printf("Acceptor %d proposal result: %t", a.id, accepted)
+			// TODO: If accepted, need to notify learners
+		default:
+			log.Printf("Acceptor %d: Unknown message type %d", a.id, msg.typ)
+		}
+	}
+}
+
+// Handle prepare message - core Paxos logic
+// TODO: This is my understanding of the promise logic, hope it's right
+func (a *acceptor) handlePrepare(prepare message) *message {
+	log.Printf("Acceptor %d handling prepare with seq %d (current promised: %d)",
+		a.id, prepare.seq, a.promisedSeq)
+
+	// Only promise if this sequence number is higher than what I've seen
+	if prepare.seq <= a.promisedSeq {
+		log.Printf("Acceptor %d rejecting prepare - seq too low", a.id)
+		return nil // ignore lower sequence numbers
+	}
+
+	// Make the promise
+	a.promisedSeq = prepare.seq
+	log.Printf("Acceptor %d promising seq %d", a.id, prepare.seq)
+
+	// Send promise back to proposer
+	promise := message{
+		from: a.id,
+		to:   prepare.from,
+		typ:  Promise,
+		seq:  prepare.seq,
+		val:  a.acceptedVal, // tell proposer what I previously accepted (if anything)
+	}
+
+	return &promise
+}
+
+// Handle propose message
+// TODO: Only accept if it matches my promise
+func (a *acceptor) handlePropose(propose message) bool {
+	log.Printf("Acceptor %d handling propose with seq %d (promised: %d)",
+		a.id, propose.seq, a.promisedSeq)
+
+	// Only accept if this matches what I promised
+	if propose.seq != a.promisedSeq {
+		log.Printf("Acceptor %d rejecting propose - doesn't match promise", a.id)
+		return false
+	}
+
+	// Accept the proposal
+	a.acceptedSeq = propose.seq
+	a.acceptedVal = propose.val
+	log.Printf("Acceptor %d accepted value: %s", a.id, a.acceptedVal)
+
+	return true
+}
+
 func main() {
-	//msg := message{
-	//	from: 1,
-	//	to:   2,
-	//	typ:  Prepare,
-	//	seq:  1,
-	//	val:  "test_value",
-	//}
-
-	//fmt.Printf("created message: from=%d, to=%d, type=%d, seq=%d, val=%s\n",
-	//	msg.from, msg.to, msg.typ, msg.seq, msg.val)
-
-	// create network with 3 nodes
+	// Create network with proposer (100) and acceptors (1, 2, 3)
 	net := CreateNetwork(100, 1, 2, 3)
 
-	//node1 := net.getNodeNetwork(1)
-	//node2 := net.getNodeNetwork(2)
+	// Create acceptors
+	acceptor1 := NewAcceptor(1, net.getNodeNetwork(1))
+	acceptor2 := NewAcceptor(2, net.getNodeNetwork(2))
+	acceptor3 := NewAcceptor(3, net.getNodeNetwork(3))
 
-	//testMsg := message{from: 1, to: 2, typ: Prepare, seq: 1, val: "hello"}
-	//node1.send(testMsg)
+	// Start acceptors in goroutines
+	go acceptor1.run()
+	go acceptor2.run()
+	go acceptor3.run()
 
-	//receivedMsg := node2.recv()
-	//if receivedMsg != nil {
-	//	fmt.Printf("received: %+v\n", *receivedMsg)
-	//} else {
-	//	fmt.Println("no msg received")
-	//}
+	// Give acceptors time to start
+	time.Sleep(100 * time.Millisecond)
 
-	proposer := NewProposer(100, "my_test_value", net.getNodeNetwork(100), 1, 2, 3)
+	// Create and run proposer
+	proposer := NewProposer(100, "test_consensus_value", net.getNodeNetwork(100), 1, 2, 3)
 
-	fmt.Printf("Created proposer with ID %d\n", proposer.id)
-	fmt.Printf("Proposal number generation test: %d\n", proposer.getProposeNum())
+	// Run proposer in goroutine so main doesn't block
+	go proposer.run()
 
-	// Test prepare message generation
-	prepareMessages := proposer.prepare()
-	fmt.Printf("Generated %d prepare messages\n", len(prepareMessages))
-
-	for i, msg := range prepareMessages {
-		fmt.Printf("Prepare message %d: %+v\n", i, msg)
-	}
+	// Let it run for a bit
+	time.Sleep(5 * time.Second)
 
 }
