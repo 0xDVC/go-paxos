@@ -1,4 +1,7 @@
-## overview  
+## overview
+
+![Paxos Consensus Visualization](demo.gif)
+
 
 this project is a go implementation of the paxos consensus algorithm with a simple web interface that shows it running in real time. i built it because reading about paxos on paper wasn’t enough, i wanted to actually see it in action.  
 
@@ -161,9 +164,6 @@ creates interactive web interface showing:
 - **phase transitions** - prepare → propose → consensus
 - **node state updates** - current status of each participant
 
-## demo
-
-![Paxos Consensus Visualization](demo.gif)
 
 ---
 
